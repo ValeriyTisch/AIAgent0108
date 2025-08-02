@@ -1,0 +1,28 @@
+version: '3.9'
+
+services:
+  app:
+    build: .       #собираем образ из текущей директории (ищет Dockerfile в .)
+    container_name: pdf-agent #явно задаем имя контейнера
+    env_file: .env
+    ports:
+      - "8000:8000"    #Доступ к FastAPI будет по http://localhost:8000
+    volumes:
+      - ./data:/app/data    # создаем volume ./data в контейнер в /app/data
+    depends_on:
+      - db
+
+  db:
+    image: ankane/pgvector  #Используем готовый образ с установленным pgvector (важно для LangChain)
+    container_name: pgvector-db
+    environment:
+      POSTGRES_DB: mydb
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"      # порт 5432 (доступ с хоста)
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
