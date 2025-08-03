@@ -1,39 +1,34 @@
-from result_sender import send_result_to_api
-def run_agent_on_text(text: str, ground_truth: dict = None):
-    import uuid
-    import logging
-    from tenacity import retry, stop_after_attempt, wait_fixed
-    from text_extraction import chunk_text
-    from retriever_pgvector import PGEnsembleRetriever
-    from llm_setup import llm
-    from models import ExtractedEntities
-    from eval_utils import evaluate_output
-    from phoenix_setup import get_arize_logger
+import logging
+from tenacity import retry, stop_after_attempt, wait_fixed
+from src.models import ExtractedEntities
+from src.retriever_pgvector import retriever
+from src.llm_setup import llm
+from src.result_sender import send_result_to_api
 
-    logger = logging.getLogger(__name__)
-    retriever = PGEnsembleRetriever()
-    chunks = chunk_text(text)
+logger = logging.getLogger(__name__)
 
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
-    def query_llm(chunk):
-        context = retriever.get_context(chunk)
-        prompt = f"Контекст:\n{chunk}\n\nОпредели наличие следующих признаков:\n{context}"
-        return llm.invoke(prompt)
+@retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
+def query_llm(chunk: str) -> str:
+    context_docs = retriever.get_relevant_documents(chunk)
+    context = "\n".join([doc.page_content for doc in context_docs])
+    prompt = f"Контекст:\n{chunk}\n\nОпредели наличие следующих признаков:\n{context}"
+    return llm.invoke(prompt)
 
-    response = query_llm(chunks[0])
+def run_agent_on_text(text: str, ground_truth: dict = None) -> dict:
+    chunks = [text]  # при необходимости заменить на чанкинг
     try:
-        parsed = ExtractedEntities.parse_raw(response.content)
+        response = query_llm(chunks[0])
+        parsed = ExtractedEntities.parse_raw(response.content if hasattr(response, 'content') else response)
         result = parsed.dict()
-        # где `entities` — результат от LLM после pydantic-валидации
-        send_result_to_api(result, metadata={"source": "pdf-agent"})
-        # return result
+        logger.info(f"Распознанные entities: {result}")
     except Exception as e:
-        logger.error(f"Ошибка парсинга LLM: {e}")
+        logger.error(f"Ошибка парсинга LLM, итогового JSON не будет: {e}")
         raise
 
-    if ground_truth:
-        metrics = evaluate_output(result, ground_truth)
-        logger.info(f"Метрики: {metrics}")
+    send_result_to_api(result)
 
-    get_arize_logger()(prediction_id=str(uuid.uuid4()), prompt=chunks[0], llm_output=result, ground_truth=ground_truth)
+    if ground_truth:
+        result['ground_truth'] = ground_truth
+
     return result
+

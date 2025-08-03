@@ -1,31 +1,34 @@
-FROM python:3.11-slim
+# Используем минимальный Python образ
+FROM python:3.10-slim
 
+# Установка системных зависимостей
 RUN apt-get update && apt-get install -y \
+    gcc \
     build-essential \
     libpq-dev \
+    curl \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+# Установка Python-зависимостей
 WORKDIR /app
+COPY requirements.txt .
 
-COPY requirements.txt ./
-COPY .env .env
+# Установка torch и sentence-transformers вручную (CPU-only)
+RUN pip install --no-cache-dir torch==2.2.2+cpu sentence-transformers==2.5.1 \
+    --extra-index-url https://download.pytorch.org/whl/cpu
 
+# Установка всех остальных зависимостей
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Копируем исходный код
+# Очистка кэша pip и временных файлов
+RUN apt-get clean && rm -rf /root/.cache /root/.npm /tmp/* /var/tmp/*
+
+# Копируем всё приложение
 COPY . .
 
-# Указываем рабочий путь к src
-ENV PYTHONPATH=/app/src
-
-# Подтягиваем переменные окружения
-ENV OPENAI_API_KEY=${OPENAI_API_KEY}
-ENV PGVECTOR_URL=${PGVECTOR_URL}
-
-#для FastAPI
+# Экспортируем порт
 EXPOSE 8000
 
-#Газуем
-CMD ["python", "run_api.py"]
-
-
+# Команда запуска FastAPI
+CMD ["uvicorn", "src.api:app", "--host", "0.0.0.0", "--port", "8000"]

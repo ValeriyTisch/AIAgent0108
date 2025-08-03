@@ -1,163 +1,137 @@
-# 🧠 PDF Entity Extraction Agent with LLM, RAG and Evaluation
+# 🧠 PDF Entity Extraction Agent with LLM, RAG и Evaluation (локальная модель)
 
-Этот проект реализует pipeline для извлечения сущностей из PDF-документов с использованием:
-
-- 📄 LangChain + OpenAI LLM
-- 🔍 RAG с PGVector (PostgreSQL + векторные embeddings)
-- ✅ Строгая проверка через Pydantic
-- 🔁 Повторы (`retry`) и логирование ошибок
-- 📊 Автоматическая оценка качества (precision, recall, f1)
-- 🖼️ Подключение Arize Phoenix для мониторинга
-- 🌐 FastAPI API-интерфейс для подачи документов
+Этот проект реализует pipeline для извлечения сущностей из PDF-документов с использованием **локальной LLM** через **Ollama**, без подключения к OpenAI (по умолчанию). Поддерживается переключение между API и локальной моделью.
 
 ---
 
-## 🚀 Быстрый запуск (с Docker Compose)
+## ⚙️ Обновления в этой версии
 
-1. Клонируй проект и перейди в директорию:
+- ✅ **Локальный LLM через Ollama** (phi3 или mistral, работает на CPU)
+- ✅ Переключение между API-моделью и локальной (через `.env`)
+- ✅ Готовый `llm_setup.py` для LangChain + Ollama
+- ✅ `docker-compose.yml` запускает Ollama сервер
+- ✅ Возможность теста на локальных PDF без подключения к интернету
 
+---
+
+## 🚀 Быстрый запуск (локально через Docker Compose)
+
+### 📦 1. Клонируй проект:
 ```bash
 git clone https://github.com/your/repo.git
 cd your-repo
 ```
 
-2. Создай `.env` на основе `.env.example`:
-
+### 🔑 2. Создай `.env`:
 ```bash
 cp .env.example .env
 ```
 
-3. Запусти проект:
+И задай режим LLM:
+```
+LLM_MODE=ollama        # или openai
+OLLAMA_MODEL=phi3      # если используешь локальную
+OPENAI_MODEL=gpt-4     # если используешь API
+```
 
+### 🐳 3. Запусти Ollama локально:
 ```bash
-docker-compose up --build
+docker-compose up -d ollama
+```
+
+### 🧠 4. Загрузить модель:
+```bash
+docker exec -it ollama ollama run phi3
+```
+> Или замени `phi3` на другую компактную модель: `mistral`, `llama3`, `gemma` и др.
+
+### 🧪 5. Запусти агент:
+```bash
+python src/pdf_llm_agent_pipeline.py pdfs/contract1.pdf
 ```
 
 ---
 
-## 📤 API-доступ (FastAPI)
-
-После запуска будет доступен OpenAPI Swagger UI по адресу:
-
-📍 [http://localhost:8000/docs](http://localhost:8000/docs)
-
-### Примеры эндпоинтов:
-
-#### `POST /upload-pdf`
-Загрузить PDF-файл на сервер и получить результат:
-
-```bash
-curl -X POST http://localhost:8000/upload-pdf \
-  -H "accept: application/json" \
-  -H "Content-Type: multipart/form-data" \
-  -F "file=@pdfs/contract1.pdf"
-```
-
-#### `POST /analyze-text`
-Отправить уже извлечённый текст и получить JSON-ответ:
-
-```bash
-curl -X POST http://localhost:8000/analyze-text \
-  -H "Content-Type: application/json" \
-  -d '{"text": "Ваш текст из PDF здесь..."}'
-```
-
-#### 📦 Примеры запросов на Python (через `requests`)
+## 🧠 Пример `llm_setup.py` с переключением моделей
 
 ```python
-import requests
+# src/llm_setup.py
+import os
 
-# Отправка текста
-text_payload = {"text": "Ваш текст из PDF здесь..."}
-response = requests.post("http://localhost:8000/analyze-text", json=text_payload)
-print(response.json())
+LLM_MODE = os.getenv("LLM_MODE", "ollama")
 
-# Загрузка PDF-файла
-with open("pdfs/contract1.pdf", "rb") as f:
-    files = {"file": ("contract1.pdf", f, "application/pdf")}
-    response = requests.post("http://localhost:8000/upload-pdf", files=files)
-    print(response.json())
+if LLM_MODE == "openai":
+    from langchain_openai import ChatOpenAI
+    llm = ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-4"))
+
+elif LLM_MODE == "ollama":
+    from langchain_community.llms import Ollama
+    llm = Ollama(
+        model=os.getenv("OLLAMA_MODEL", "phi3"),
+        base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    )
+else:
+    raise ValueError(f"Неизвестный LLM_MODE: {LLM_MODE}")
 ```
 
 ---
 
-## 📦 Структура проекта
+## 🐳 Пример docker-compose.yml
+
+```yaml
+version: '3.8'
+
+services:
+  ollama:
+    image: ollama/ollama
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+    restart: always
+
+volumes:
+  ollama:
+```
+
+---
+
+## 📂 Пример запуска на PDF
 
 ```bash
-src/
-├── api.py                    # FastAPI endpoints
-├── pdf_llm_agent_pipeline.py # Основной агент
-├── retriever_pgvector.py     # Векторное хранилище (PGVector)
-├── llm_setup.py              # Настройка LLM
-├── models.py                 # Pydantic модели
-├── text_extraction.py        # Извлечение текста из PDF
-├── phoenix_setup.py          # Подключение Arize Phoenix
-├── eval_utils.py             # Метрики и экспорт в Excel
-run_batch_evaluation.py       # Оценка качества по Excel
-Dockerfile
-requirements.txt
-docker-compose.yml
-.env
+python src/pdf_llm_agent_pipeline.py pdfs/contract1.pdf
 ```
 
----
-
-## 🧪 Тестирование и оценка
-
-### 📄 Шаг 1: Подготовка Excel с ground truth
-
-Создай файл `data/test_ground_truth.xlsx` со структурой:
-
-| filename      | inn         | date       | has_stamp | is_offer | mentions_guarantee |
-|---------------|-------------|------------|-----------|----------|--------------------|
-| contract1.pdf | 7707083893  | 2023-09-15 | TRUE      | FALSE    | TRUE               |
-| contract2.pdf | 1234567890  | 2022-11-01 | FALSE     | TRUE     | FALSE              |
-
-> ⚠️ PDF-файлы должны лежать в папке `pdfs/`
-
-
-### 🧠 Шаг 2: Запуск оценки
-
-```bash
-python run_batch_evaluation.py
+**Пример вывода:**
+```json
+{
+  "inn": "7707083893",
+  "date": "2023-09-15",
+  "has_stamp": true,
+  "mentions_guarantee": false
+}
 ```
 
-Будет сформирован файл: `results/predictions_with_metrics.xlsx`
-
-### 📊 Метрики:
-- Precision
-- Recall
-- F1-score
-- Accuracy
-
-Также выводится сводка по всем документам в консоли.
+И автоматически отправляется через `result_sender.py` на внешний REST API, если он настроен.
 
 ---
 
-## 📌 Используемые технологии
-- OpenAI GPT-4 (или o4-mini)
-- LangChain (RAG)
-- PGVector + SQLAlchemy
-- Pydantic
-- FastAPI
-- Arize Phoenix
-- Docker / docker-compose
+## 🧪 Тест PDF
+
+Папка `pdfs/` предназначена для ПДФ файлов:
+```
+pdfs/
+├── contract1.pdf
+├── contract2.pdf
+```
+
+запускай `pdf_llm_agent_pipeline.py`
 
 ---
-
-## ✅ TODO / Возможности расширения
-- 🔍 Визуализация ошибок в UI
-- 📁 Поддержка zip-архивов с PDF
-- 📉 Обучение собственной embedding-модели
-- 🧪 Интеграция с CI для автоматической регрессии
-
 ---
 
-Если у тебя остались вопросы — открывай Issue или пиши в чат!
-
-
-Если у тебя остались вопросы — открывай Issue или пиши в чат!
-
+=============================================================
 
 """
 Lва эндпойнта:
@@ -272,3 +246,72 @@ Recall = 2 / (2 + 2) = 0.5
 F1 = 2 * (0.666 * 0.5) / (0.666 + 0.5) ≈ 0.571
 
 Эти метрики особенно полезны при тестировании на множестве документов (batch evaluation) с Excel-файлом ground truth.
+
+'''
+Для рестарта с удалением кэша и образоввщ:
+docker-compose down --volumes
+docker system prune -af
+docker-compose build --no-cache
+docker-compose up
+
+'''
+
+## 📥 Эндпоинты FastAPI
+
+### 1. `POST /upload-pdf`
+Загрузка PDF-файла:
+```bash
+curl -X 'POST' \
+  'http://localhost:8000/upload-pdf' \
+  -H 'accept: application/json' \
+  -F 'file=@sample.pdf' \
+  -F 'ground_truth={"inn": "1234567890", "has_stamp": true}'
+```
+
+### 2. `POST /upload-text`
+Загрузка обычного текста:
+```bash
+curl -X 'POST' \
+  'http://localhost:8000/upload-text' \
+  -H 'accept: application/json' \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  -d 'text=ИНН 1234567890 содержится в этом тексте' \
+  -d 'ground_truth={"inn": "1234567890"}'
+```
+
+## 📌 Примеры запросов на Python (requests)
+
+### ✅ Отправка PDF-файла с `ground_truth`:
+```
+import requests
+
+url = "http://localhost:8000/upload-pdf"
+file_path = "sample.pdf"
+
+with open(file_path, "rb") as f:
+    files = {"file": ("sample.pdf", f, "application/pdf")}
+    data = {
+        "ground_truth": '{"inn": "1234567890", "has_stamp": true, "mentions_guarantee": false}'
+    }
+    response = requests.post(url, files=files, data=data)
+
+print("Status:", response.status_code)
+print("Response:", response.json())
+```
+
+### ✅ Отправка текста с `ground_truth`:
+```
+import requests
+
+url = "http://localhost:8000/upload-text"
+
+data = {
+    "text": "Это пример текста, содержащего ИНН 1234567890 и упоминание гарантий.",
+    "ground_truth": '{"inn": "1234567890", "mentions_guarantee": true}'
+}
+
+response = requests.post(url, data=data)
+
+print("Status:", response.status_code)
+print("Response:", response.json())
+```

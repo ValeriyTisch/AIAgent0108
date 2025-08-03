@@ -1,10 +1,12 @@
+# src/api.py
+
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import JSONResponse
 from typing import Optional
 import tempfile
 import json
-from text_extraction import extract_text_from_pdf
-from pdf_llm_agent_pipeline import run_agent_on_text
+from src.text_extraction import extract_text_from_pdf
+from src.pdf_llm_agent_pipeline import run_agent_on_text
 
 app = FastAPI()
 
@@ -16,8 +18,20 @@ async def upload_pdf(file: UploadFile = File(...), ground_truth: Optional[str] =
             tmp.write(contents)
             tmp_path = tmp.name
 
-        text = extract_text_from_pdf(tmp_path)
-        gt_dict = json.loads(ground_truth) if ground_truth else None
+        text_chunks = extract_text_from_pdf(tmp_path)
+        text = text_chunks[0] if text_chunks else ""
+
+        if ground_truth:
+            try:
+                gt_dict = json.loads(ground_truth)
+            except json.JSONDecodeError:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "Invalid JSON in ground_truth"}
+                )
+        else:
+            gt_dict = None
+
         prediction = run_agent_on_text(text, gt_dict)
         return JSONResponse(content={"result": prediction})
 
@@ -27,8 +41,19 @@ async def upload_pdf(file: UploadFile = File(...), ground_truth: Optional[str] =
 @app.post("/upload-text")
 async def upload_text(text: str = Form(...), ground_truth: Optional[str] = Form(None)):
     try:
-        gt_dict = json.loads(ground_truth) if ground_truth else None
+        if ground_truth:
+            try:
+                gt_dict = json.loads(ground_truth)
+            except json.JSONDecodeError:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "Invalid JSON in ground_truth"}
+                )
+        else:
+            gt_dict = None
+
         prediction = run_agent_on_text(text, gt_dict)
         return JSONResponse(content={"result": prediction})
+
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})

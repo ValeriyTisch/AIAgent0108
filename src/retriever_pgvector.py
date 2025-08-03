@@ -1,57 +1,56 @@
-# 📁 src/retriever_pgvector.py
-
+# src/retriever_pgvector.py
 import os
-import json
+import psycopg2
+from dotenv import load_dotenv
 from langchain.vectorstores.pgvector import PGVector
-from langchain.embeddings.openai import OpenAIEmbeddings
-from langchain.schema import Document
-from sqlalchemy import create_engine, text
-from typing import List
+#from langchain.embeddings import HuggingFaceEmbeddings
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_core.documents import Document
 
-class PGEnsembleRetriever:
-    def __init__(self, collection_name: str = "entity_descriptions"):
-        self.embeddings = OpenAIEmbeddings()
-        self.pg_url = os.getenv("PGVECTOR_URL", "postgresql+psycopg2://user:password@localhost:5432/mydb")
-        self._init_pgvector_extension()
+load_dotenv()
 
-        self.store = PGVector(
-            collection_name=collection_name,
-            connection_string=self.pg_url,
-            embedding_function=self.embeddings
-        )
-        self._autoload_descriptions()
+# Настройка эмбеддингов
+embedding_model = HuggingFaceEmbeddings(model_name="intfloat/e5-small")
 
-    def _init_pgvector_extension(self):
-        try:
-            engine = create_engine(self.pg_url)
-            with engine.connect() as conn:
-                conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        except Exception as e:
-            print(f"Ошибка инициализации расширения pgvector: {e}")
+# Подключение к PostgreSQL
+pgvector_connection_string = f"postgresql+psycopg2://{os.getenv('PGVECTOR_USER', 'postgres')}:{os.getenv('PGVECTOR_PASSWORD', 'postgres')}@{os.getenv('PGVECTOR_HOST', 'localhost')}:{os.getenv('PGVECTOR_PORT', 5432)}/{os.getenv('PGVECTOR_DB', 'postgres')}"
 
-    def _autoload_descriptions(self):
-        path = "data/entity_descriptions.json"
-        if not os.path.exists(path):
-            raise FileNotFoundError(f"Файл не найден: {path}")
-        with open(path, "r", encoding="utf-8") as f:
-            descriptions = json.load(f)
-        self.add_entity_descriptions(descriptions)
+# Создание retriever через from_existing_index
+collection_name = os.getenv("PGVECTOR_COLLECTION", "entities")
+entity_pg = PGVector.from_existing_index(
+    embedding=embedding_model,
+    collection_name=collection_name,
+    connection_string=pgvector_connection_string
+)
 
-    def _exists(self, entity_key: str) -> bool:
-        results = self.store.similarity_search(entity_key, k=5)
-        for doc in results:
-            if doc.metadata.get("entity") == entity_key:
-                return True
-        return False
+retriever = entity_pg.as_retriever()
 
-    def add_entity_descriptions(self, descriptions: dict):
-        docs = []
-        for key, desc in descriptions.items():
-            if not self._exists(key):
-                docs.append(Document(page_content=desc, metadata={"entity": key}))
-        if docs:
-            self.store.add_documents(docs)
+def load_entity_descriptions():
+    # Проверка: если есть хотя бы 1 документ, пропускаем
+    if entity_pg.similarity_search("ИНН", k=1):
+        print("✅ Описания сущностей уже загружены в PGVector")
+        return
 
-    def get_context(self, query: str, top_k: int = 5) -> str:
-        results = self.store.similarity_search(query, k=top_k)
-        return "\n".join([doc.page_content for doc in results])
+    entity_descriptions = [
+        {"name": "has_stamp", "description": "Признак наличия печати в документе"},
+        {"name": "mentions_guarantee", "description": "Упоминается ли гарантия или обязательство"},
+        {"name": "contains_penalty", "description": "Указания на штрафные санкции или ответственность"}
+    ]
+
+    texts = [f"{e['name']}: {e['description']}" for e in entity_descriptions]
+    splitter = RecursiveCharacterTextSplitter(chunk_size=200, chunk_overlap=20)
+    docs = splitter.create_documents(texts)
+
+    # Проверка на дубли и добавление
+    for i, doc in enumerate(docs):
+        name = entity_descriptions[i]['name']
+        if not entity_pg.similarity_search(name, k=1):
+            PGVector.from_documents(
+                documents=[doc],
+                embedding=embedding_model,
+                collection_name=collection_name,
+                connection_string=pgvector_connection_string
+            )
+
+load_entity_descriptions()
